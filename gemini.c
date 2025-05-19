@@ -6,7 +6,7 @@
 #include "cJSON.h"
 #include "gemini.h" // Mantemos o nome por compatibilidade
 
-#define API_KEY "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"
+#define API_KEY "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"
 #define MODEL "deepseek/deepseek-prover-v2:free"
 #define ENDPOINT "https://openrouter.ai/api/v1/chat/completions"
 
@@ -88,23 +88,46 @@ char* chamarIA(const char* prompt) {
         return strdup("Erro: Resposta vazia da IA");
     }
 
-
     // Parsing do JSON de resposta
     cJSON *json = cJSON_Parse(chunk.buffer);
+    printf("\n--- RESPOSTA DA IA (raw) ---\n%s\n-----------------------------\n", chunk.buffer);
     free(chunk.buffer);
     if (!json) return strdup("Erro: JSON inválido da IA");
 
     cJSON *choices = cJSON_GetObjectItem(json, "choices");
-    cJSON *firstChoice = cJSON_GetArrayItem(choices, 0);
-    cJSON *message = cJSON_GetObjectItem(firstChoice, "message");
-    cJSON *text = cJSON_GetObjectItem(message, "content");
+    if (!choices || !cJSON_IsArray(choices)) {
+        cJSON_Delete(json);
+        return strdup("Erro: Campo 'choices' não encontrado ou inválido");
+    }
 
+    cJSON *firstChoice = cJSON_GetArrayItem(choices, 0);
+    if (!firstChoice) {
+        cJSON_Delete(json);
+        return strdup("Erro: 'choices[0]' não encontrado");
+    }
+
+    cJSON *message = cJSON_GetObjectItem(firstChoice, "message");
+    if (!message) {
+        cJSON_Delete(json);
+        return strdup("Erro: Campo 'message' não encontrado");
+    }
+
+    cJSON *text = cJSON_GetObjectItem(message, "content");
     if (!text || !cJSON_IsString(text)) {
         cJSON_Delete(json);
         return strdup("Erro: Campo 'content' não encontrado");
     }
 
     char *resultado = strdup(text->valuestring);
+    if (strncmp(resultado, "text", 4) == 0 || strncmp(resultado, "plaintext", 9) == 0) {
+        char* espaco = strchr(resultado, ' ');
+        if (espaco && strlen(espaco + 1) > 0) {
+            char* limpo = strdup(espaco + 1);
+            free(resultado);
+            resultado = limpo;
+      }
+  }
     cJSON_Delete(json);
     return resultado;
+
 }
