@@ -7,6 +7,8 @@
 #include "cJSON.h"
 #include <ctype.h>
 #include "gemini.h"
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 
 #define MAX_NOME 50
 #define MAX_ENIGMAS 100
@@ -170,15 +172,226 @@ void extrairNumerosApenas(char* destino, const char* origem) {
     }
     destino[j] = '\0';
 }
+void renderTexto(SDL_Renderer* renderer, TTF_Font* fonte, const char* texto, int x, int y, SDL_Color cor) {
+    SDL_Surface* surface = TTF_RenderUTF8_Blended(fonte, texto, cor);
+    if (!surface) return;
 
-void jogarDesafio() {
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_Rect dst = {x, y, surface->w, surface->h};
+
+    SDL_RenderCopy(renderer, texture, NULL, &dst);
+
+    SDL_FreeSurface(surface);
+    SDL_DestroyTexture(texture);
+}
+void renderTextoMultilinha(SDL_Renderer* renderer, TTF_Font* fonte, const char* textoOriginal, int x, int yInicial, SDL_Color cor) {
+    const int larguraMaxima = 500;
+    int yAtual = yInicial;
+
+    char linha[1024] = "";
+    char palavra[512] = "";
+    const char* ptr = textoOriginal;
+    int linhaLen = 0;
+
+    while (*ptr) {
+        int bytes = 1;
+
+        // Detectar quantos bytes o caractere UTF-8 ocupa
+        unsigned char c = (unsigned char)*ptr;
+        if ((c & 0x80) == 0x00)       bytes = 1;
+        else if ((c & 0xE0) == 0xC0)  bytes = 2;
+        else if ((c & 0xF0) == 0xE0)  bytes = 3;
+        else if ((c & 0xF8) == 0xF0)  bytes = 4;
+
+        // Copiar a palavra atual
+        int i = 0;
+        while (*ptr && !isspace(*ptr)) {
+            palavra[i++] = *ptr++;
+            // verificar se estamos em meio a UTF-8 multibyte
+            while ((unsigned char)*(ptr) >= 128 && (unsigned char)*(ptr) <= 191) {
+                palavra[i++] = *ptr++;
+            }
+        }
+        palavra[i] = '\0';
+
+        // Pular espaços e adicionar ao final da palavra
+        char espacos[16] = "";
+        int j = 0;
+        while (*ptr && isspace(*ptr)) {
+            espacos[j++] = *ptr++;
+        }
+        espacos[j] = '\0';
+
+        // Testar tamanho se essa palavra entrar na linha
+        char teste[1024];
+        snprintf(teste, sizeof(teste), "%s%s%s", linha, linhaLen > 0 ? " " : "", palavra);
+
+        int largura;
+        TTF_SizeUTF8(fonte, teste, &largura, NULL);
+
+        if (largura > larguraMaxima) {
+            // Renderiza a linha anterior
+            renderTexto(renderer, fonte, linha, x, yAtual, cor);
+            yAtual += 40;
+            snprintf(linha, sizeof(linha), "%s", palavra);
+        } else {
+            if (linhaLen > 0) {
+                strcat(linha, " ");
+                strcat(linha, palavra);
+            } else {
+                strcpy(linha, palavra);
+            }
+        }
+
+        linhaLen = strlen(linha);
+    }
+
+    if (linhaLen > 0) {
+        renderTexto(renderer, fonte, linha, x, yAtual, cor);
+    }
+}
+
+
+
+
+
+
+char* removerMarkdown(const char* texto) {
+    if (!texto) return strdup("Enigma inválido");
+
+    int len = strlen(texto);
+    char* resultado = malloc(len + 1);
+    if (!resultado) return strdup("Erro de memória");
+
+    int j = 0;
+    for (int i = 0; i < len;) {
+        unsigned char c = texto[i];
+
+        // Ignora caracteres de formatação Markdown (apenas ASCII)
+        if (c == '*' || c == '#' || c == '_' || c == '`') {
+            i++;  // Pula só esse byte
+            continue;
+        }
+
+        // Copia bytes multibyte de UTF-8
+        int bytes = 1;
+        if ((c & 0x80) == 0x00) bytes = 1;
+        else if ((c & 0xE0) == 0xC0) bytes = 2;
+        else if ((c & 0xF0) == 0xE0) bytes = 3;
+        else if ((c & 0xF8) == 0xF0) bytes = 4;
+
+        for (int b = 0; b < bytes; b++) {
+            resultado[j++] = texto[i++];
+        }
+    }
+
+    resultado[j] = '\0';
+    return resultado;
+}
+
+
+
+
+char* mostrarTelaNomeJogador(SDL_Renderer* renderer, TTF_Font* fonte) {
+    int quit = 0;
+    SDL_Event e;
+    char nome[50] = "";
+    int pos = 0;
+
+    while (!quit) {
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) return NULL;
+
+            if (e.type == SDL_TEXTINPUT && pos < 49) {
+                strcat(nome, e.text.text);
+                pos = strlen(nome);
+            } else if (e.type == SDL_KEYDOWN) {
+                if (e.key.keysym.sym == SDLK_BACKSPACE && pos > 0) {
+                    nome[pos - 1] = '\0';
+                    pos--;
+                } else if (e.key.keysym.sym == SDLK_RETURN && pos > 0) {
+                    quit = 1;
+                }
+            }
+        }
+
+        SDL_SetRenderDrawColor(renderer, 20, 20, 50, 255);
+        SDL_RenderClear(renderer);
+
+        SDL_Color corBranca = {255, 255, 255};
+
+        renderTexto(renderer, fonte, "Digite seu nome:", 200, 100, corBranca);
+        renderTexto(renderer, fonte, nome, 200, 150, corBranca);
+        renderTexto(renderer, fonte, "(Pressione Enter para continuar)", 200, 220, corBranca);
+
+        SDL_RenderPresent(renderer);
+        SDL_Delay(5); // 60 FPS
+    }
+
+    char* resultado = malloc(strlen(nome) + 1);
+    strcpy(resultado, nome);
+    return resultado;
+}
+char* mostrarTelaDesafio(SDL_Renderer* renderer, TTF_Font* fonte, const char* enigma, int pontuacao) {
+
+    SDL_Event e;
+    char resposta[100] = "";
+    int pos = 0;
+    bool quit = false;
+
+    while (!quit) {
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) return NULL;
+            if (e.type == SDL_KEYDOWN) {
+                if (e.key.keysym.sym == SDLK_RETURN && pos > 0) {
+                    quit = true;
+                } else if (e.key.keysym.sym == SDLK_BACKSPACE && pos > 0) {
+                    resposta[--pos] = '\0';
+                } else if (e.key.keysym.sym == SDLK_ESCAPE) {
+                    return NULL;
+                }
+            } else if (e.type == SDL_TEXTINPUT && pos < 99) {
+                strcat(resposta, e.text.text);
+                pos = strlen(resposta);
+            }
+        }
+
+        SDL_SetRenderDrawColor(renderer, 20, 20, 50, 255);
+        SDL_RenderClear(renderer);
+
+        SDL_Color corBranca = {255, 255, 255};
+
+        renderTexto(renderer, fonte, "Desafio do Mestre dos Números", 140, 30, corBranca);
+        
+        char* enigmaLimpo = removerMarkdown(enigma);
+        if (enigmaLimpo) {
+            renderTextoMultilinha(renderer, fonte, enigmaLimpo, 60, 100, corBranca);
+            free(enigmaLimpo);
+        }else{
+            renderTexto(renderer, fonte, "Erro ao limpar enigma", 60, 100, corBranca);
+        }
+        
+        renderTexto(renderer, fonte, "Sua resposta:", 60, 250, corBranca);
+        renderTexto(renderer, fonte, resposta, 250, 250, corBranca);
+
+        char buffer[50];
+        sprintf(buffer, "Pontuacao: %d", pontuacao);
+        renderTexto(renderer, fonte, buffer, 60, 400, corBranca);
+
+        renderTexto(renderer, fonte, "[Enter] Enviar", 60, 320, corBranca);
+        renderTexto(renderer, fonte, "[Esc] Voltar ao menu", 60, 360, corBranca);
+
+        SDL_RenderPresent(renderer);
+        SDL_Delay(16);
+    }
+
+    char* final = malloc(strlen(resposta) + 1);
+    strcpy(final, resposta);
+    return final;
+}
+
+void jogarDesafio(SDL_Renderer* renderer, TTF_Font* fonte, const char* nome) {
     clear();
-    printw("Digite seu nome: ");
-    char nome[MAX_NOME];
-    echo();
-    getstr(nome);
-    noecho();
-
     printw("Olá, %s! Pressione qualquer tecla para continuar...\n", nome);
     getch();
 
@@ -186,7 +399,11 @@ void jogarDesafio() {
 
     while (1) {
         clear();
-        const char* promptDesafio = "Me envie apenas 1 enigma matematico simples e objetivo para um jogo educativo infantil. Apenas o enunciado.";
+        const char* promptDesafio = 
+            "Gere apenas 1 enunciado de um enigma matemático simples e curto, ideal para crianças de até 10 anos. "
+            "A resposta não deve aparecer. O enigma deve ter no máximo 150 caracteres. "
+            "Além disso a resposta deve sempre ser um número, exemplo: quem sou eu, que dividido por mim sou eu mesmo? "
+            "Retorne apenas o texto do enunciado, sem explicação, sem resposta, sem título.";
         char* desafio = NULL;
 
         int tentativas = 0;
@@ -225,16 +442,17 @@ void jogarDesafio() {
         }
 
         empilharEnigma(desafio);
+        
+        char* resposta = mostrarTelaDesafio(renderer, fonte, desafio, pontuacao);
+        if (!resposta) {
+            free(desafio);
+            break;
+        }
 
-        printw("Desafio para %s:\n\n", nome);
-        printw("%s\n", desafio);
-        printw("\n(Saia digitando 'q')\nSua resposta: ");
-
-        char respostaJogador[100];
-        echo();
-        memset(respostaJogador, 0, sizeof(respostaJogador));
-        getnstr(respostaJogador, sizeof(respostaJogador) - 1);
-        noecho();
+        char respostaJogador[100] = "";
+        strncpy(respostaJogador, resposta, sizeof(respostaJogador) - 1);
+        respostaJogador[sizeof(respostaJogador) - 1] = '\0';
+        free(resposta);
 
         if (strcmp(respostaJogador, "q") == 0) {
             free(desafio);
@@ -248,8 +466,10 @@ void jogarDesafio() {
         }
 
         char promptResposta[512];
-        snprintf(promptResposta, sizeof(promptResposta), "Resolva este enigma apenas com a resposta numerica, apenas a resposta em digito, sem explicar nada: %s", desafio);
+        snprintf(promptResposta, sizeof(promptResposta),
+            "Resolva este enigma apenas com a resposta numerica, apenas a resposta em digito, sem explicar nada: %s", desafio);
         free(desafio);
+
         char* respostaIA = chamarIA(promptResposta);
 
         if (!respostaIA || strlen(respostaIA) < 1) {
@@ -259,7 +479,6 @@ void jogarDesafio() {
             return;
         }
 
-        // Extração limpa da resposta numérica
         char respostaEsperada[20] = "";
         extrairNumerosApenas(respostaEsperada, respostaIA);
 
@@ -287,34 +506,158 @@ void jogarDesafio() {
 }
 
 
+void mostrarRankingSDL(SDL_Renderer* renderer, TTF_Font* fonte) {
+    SDL_Event e;
+    int quit = 0;
 
-void menu() {
-    int opcao;
-    while (1) {
-        clear();
-        printw("=== DESAFIO DO MESTRE DOS NÚMEROS ===\n");
-        printw("1. Jogar desafio\n");
-        printw("2. Ver ranking\n");
-        printw("3. Sair\n");
-        printw("Escolha uma opção: ");
+    while (!quit) {
+        SDL_SetRenderDrawColor(renderer, 20, 20, 50, 255);
+        SDL_RenderClear(renderer);
 
-        opcao = getch();
-        switch(opcao) {
-            case '1': jogarDesafio(); break;
-            case '2': mostrarRanking(); break;
-            case '3': return;
-            default: printw("\nOpção inválida. Tente novamente.\n"); getch();
+        SDL_Color corBranca = {255, 255, 255};
+
+        renderTexto(renderer, fonte, "🏆 RANKING DOS JOGADORES", 140, 40, corBranca);
+
+        if (!ranking) {
+            renderTexto(renderer, fonte, "Nenhum jogador ainda.", 180, 120, corBranca);
+        } else {
+            Jogador* atual = ranking;
+            int y = 100;
+            int pos = 1;
+            do {
+                char linha[100];
+                snprintf(linha, sizeof(linha), "%d. %s - %d pontos", pos++, atual->nome, atual->pontuacao);
+                renderTexto(renderer, fonte, linha, 100, y += 40, corBranca);
+                atual = atual->prox;
+            } while (atual != ranking);
+        }
+
+        renderTexto(renderer, fonte, "[Esc] Voltar ao menu", 180, 420, corBranca);
+
+        SDL_RenderPresent(renderer);
+
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) {
+                exit(0);
+            }
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                quit = 1;
+            }
+        }
+
+        SDL_Delay(16);
+    }
+}
+
+
+void mostrarMenuPrincipal(SDL_Renderer* renderer, TTF_Font* fonte) {
+    int running = 1;
+    SDL_Event e;
+
+    SDL_Color corTexto = {255, 255, 255};
+    SDL_Color corFundo = {30, 30, 60};
+    SDL_Color corBotao = {70, 130, 180};
+
+    SDL_Rect botoes[3] = {
+        {200, 200, 200, 50},  // Jogar
+        {200, 270, 200, 50},  // Ver Ranking
+        {200, 340, 200, 50}   // Sair
+    };
+
+    const char* textos[3] = {"Jogar", "Ver Ranking", "Sair"};
+
+    while (running) {
+        SDL_SetRenderDrawColor(renderer, corFundo.r, corFundo.g, corFundo.b, 255);
+        SDL_RenderClear(renderer);
+
+        // Título
+        SDL_Surface* tituloSurface = TTF_RenderUTF8_Blended(fonte, "Desafio do Mestre dos Números", corTexto);
+        SDL_Texture* tituloTexture = SDL_CreateTextureFromSurface(renderer, tituloSurface);
+        SDL_Rect tituloRect = {100, 100, tituloSurface->w, tituloSurface->h};
+        SDL_RenderCopy(renderer, tituloTexture, NULL, &tituloRect);
+        SDL_FreeSurface(tituloSurface);
+        SDL_DestroyTexture(tituloTexture);
+
+        for (int i = 0; i < 3; i++) {
+            SDL_SetRenderDrawColor(renderer, corBotao.r, corBotao.g, corBotao.b, 255);
+            SDL_RenderFillRect(renderer, &botoes[i]);
+
+            SDL_Surface* textoSurface = TTF_RenderUTF8_Blended(fonte, textos[i], corTexto);
+            SDL_Texture* textoTexture = SDL_CreateTextureFromSurface(renderer, textoSurface);
+            SDL_Rect textoRect = {
+                botoes[i].x + (botoes[i].w - textoSurface->w) / 2,
+                botoes[i].y + (botoes[i].h - textoSurface->h) / 2,
+                textoSurface->w,
+                textoSurface->h
+            };
+            SDL_RenderCopy(renderer, textoTexture, NULL, &textoRect);
+            SDL_FreeSurface(textoSurface);
+            SDL_DestroyTexture(textoTexture);
+        }
+
+        SDL_RenderPresent(renderer);
+
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) {
+                running = 0;
+            }
+            if (e.type == SDL_MOUSEBUTTONDOWN) {
+                int x = e.button.x;
+                int y = e.button.y;
+                for (int i = 0; i < 3; i++) {
+                    if (x >= botoes[i].x && x <= botoes[i].x + botoes[i].w &&
+                        y >= botoes[i].y && y <= botoes[i].y + botoes[i].h) {
+                        
+                        if (i == 0) {
+                            // Jogar
+                            char* nome = mostrarTelaNomeJogador(renderer, fonte);
+                            if(nome){
+                               jogarDesafio(renderer, fonte, nome);
+                                free(nome);
+                            }
+                        } else if (i == 1) {
+                            mostrarRankingSDL(renderer, fonte);  // função futura
+                        } else if (i == 2) {
+                            running = 0;  // Sair
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
-int main() {
-    srand(time(NULL));
-    initscr();
-    cbreak();
-    noecho();
-    menu();
-    endwin();
+
+
+int main(int argc, char* argv[]) {
+    if (SDL_Init(SDL_INIT_VIDEO) != 0 || TTF_Init() != 0) {
+        printf("Erro ao inicializar SDL ou SDL_ttf: %s\n", SDL_GetError());
+        return 1;
+    }
+    
+    SDL_StartTextInput();
+
+    SDL_Window* window = SDL_CreateWindow("Desafio do Mestre dos Números",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 500, 0);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    TTF_Font* fonte = TTF_OpenFont("Fonte.ttf", 24);  // ou substitua pela sua fonte
+
+    if (!fonte) {
+        printf("Erro ao carregar fonte.\n");
+        return 1;
+    }
+
+    mostrarMenuPrincipal(renderer, fonte);  // 👈 Mostra o menu
+    
+    TTF_CloseFont(fonte);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    
+    SDL_StopTextInput();
+    
+    TTF_Quit();
+    SDL_Quit();
     return 0;
 }
+
 
