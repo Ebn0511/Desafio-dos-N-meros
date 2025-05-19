@@ -132,12 +132,45 @@ void limparString(char *str) {
 
 int compararRespostas(const char *a, const char *b) {
     char copiaA[100], copiaB[100];
-    strncpy(copiaA, a, sizeof(copiaA));
-    strncpy(copiaB, b, sizeof(copiaB));
+    strncpy(copiaA, a, sizeof(copiaA) - 1);
+    strncpy(copiaB, b, sizeof(copiaB) - 1);
+    copiaA[sizeof(copiaA) - 1] = '\0';
+    copiaB[sizeof(copiaB) - 1] = '\0';
     limparString(copiaA);
     limparString(copiaB);
     return strcmp(copiaA, copiaB) == 0;
 }
+
+void limparRespostaIA(char* resposta) {
+    char* src = resposta;
+    char* dst = resposta;
+    while (*src) {
+        if (strncmp(src, "```", 3) == 0) {
+            src += 3;
+            continue;
+        }
+        if (strncmp(src, "text", 4) == 0) {
+            src += 4;
+            continue;
+        }
+        if (*src == '\n') {
+            src++;
+            continue;
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+}
+void extrairNumerosApenas(char* destino, const char* origem) {
+    int j = 0;
+    for (int i = 0; origem[i] != '\0'; i++) {
+        if (isdigit(origem[i])) {
+            destino[j++] = origem[i];
+        }
+    }
+    destino[j] = '\0';
+}
+
 void jogarDesafio() {
     clear();
     printw("Digite seu nome: ");
@@ -153,12 +186,10 @@ void jogarDesafio() {
 
     while (1) {
         clear();
-        const char* promptDesafio = "Me envie um enigma matematico simples e objetivo para um jogo educativo, apenas o enunciado";
+        const char* promptDesafio = "Me envie apenas 1 enigma matematico simples e objetivo para um jogo educativo infantil. Apenas o enunciado.";
         char* desafio = NULL;
 
         int tentativas = 0;
-
-        // Tenta obter um enigma válido e inédito
         do {
             if (desafio) {
                 free(desafio);
@@ -174,10 +205,6 @@ void jogarDesafio() {
                 continue;
             }
 
-            // DEBUG opcional:
-            // printw("DEBUG: desafio = \"%s\"\n", desafio);
-            // getch();
-
             if (enigmaJaUsadoPilha(desafio)) {
                 printw("⚠️ Enigma repetido detectado. Buscando outro...\n");
                 getch();
@@ -187,7 +214,7 @@ void jogarDesafio() {
                 continue;
             }
 
-            break;  // Enigma válido e inédito
+            break;
 
         } while (tentativas < 3);
 
@@ -221,9 +248,9 @@ void jogarDesafio() {
         }
 
         char promptResposta[512];
-        snprintf(promptResposta, sizeof(promptResposta), "Resolva este enigma apenas com a resposta numerica: %s", desafio);
+        snprintf(promptResposta, sizeof(promptResposta), "Resolva este enigma apenas com a resposta numerica, apenas a resposta em digito, sem explicar nada: %s", desafio);
+        free(desafio);
         char* respostaIA = chamarIA(promptResposta);
-        free(desafio);  // desafio já usado, pode liberar
 
         if (!respostaIA || strlen(respostaIA) < 1) {
             printw("Erro ao obter resposta da IA.\n");
@@ -232,24 +259,24 @@ void jogarDesafio() {
             return;
         }
 
-        // Limpa espaços e quebras no começo
-        while (*respostaIA && (*respostaIA == '\n' || *respostaIA == ' ')) {
-            respostaIA++;
-        }
+        // Extração limpa da resposta numérica
+        char respostaEsperada[20] = "";
+        extrairNumerosApenas(respostaEsperada, respostaIA);
 
-        if (compararRespostas(respostaIA, respostaJogador)) {
+        if (compararRespostas(respostaEsperada, respostaJogador)) {
             pontuacao++;
             printw("\n✅ Resposta correta! Pontuação: %d\n", pontuacao);
         } else {
-            printw("\n❌ Resposta incorreta. Resposta esperada: %s\n", respostaIA);
+            printw("\n❌ Resposta incorreta. Resposta esperada: %s\n", respostaEsperada);
             refresh();
             napms(2500);
+            free(respostaIA);
             break;
         }
 
+        free(respostaIA);
         refresh();
         napms(1500);
-        free(respostaIA);
     }
 
     inserirRanking(nome, pontuacao);
@@ -258,6 +285,7 @@ void jogarDesafio() {
     printw("Pressione qualquer tecla para voltar ao menu.");
     getch();
 }
+
 
 
 void menu() {
@@ -289,3 +317,4 @@ int main() {
     endwin();
     return 0;
 }
+
